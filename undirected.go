@@ -38,6 +38,77 @@ func (u *undirected[K, T]) AddVertex(value T, options ...func(*VertexProperties)
 	return u.store.AddVertex(hash, value, prop)
 }
 
+func (u *undirected[K, T]) UpdateVertex(existingHash K, value T, options ...func(*VertexProperties)) error {
+	_, _, err := u.store.Vertex(existingHash)
+	if err != nil {
+		return err
+	}
+
+	newHash := u.hash(value)
+	if existingHash != newHash {
+		_, _, err = u.store.Vertex(newHash)
+		if !errors.Is(err, ErrVertexNotFound) {
+			return ErrVertexAlreadyExists
+		}
+	}
+
+	adjacencyMap, err := u.AdjacencyMap()
+	if err != nil {
+		return err
+	}
+
+	existingEdges := adjacencyMap[existingHash]
+
+	for _, edge := range existingEdges {
+		err = u.RemoveEdge(edge.Source, edge.Target)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = u.store.RemoveVertex(existingHash)
+	if err != nil {
+		return err
+	}
+
+	properties := VertexProperties{
+		Weight:     0,
+		Attributes: make(map[string]string),
+	}
+
+	for _, option := range options {
+		option(&properties)
+	}
+
+	err = u.store.AddVertex(newHash, value, properties)
+	if err != nil {
+		return err
+	}
+
+	for _, existingEdge := range existingEdges {
+		src := existingEdge.Source
+		if existingEdge.Source == existingHash {
+			src = newHash
+		}
+		tgt := existingEdge.Target
+		if existingEdge.Target == existingHash {
+			tgt = newHash
+		}
+
+		edge := Edge[K]{
+			Source:     src,
+			Target:     tgt,
+			Properties: existingEdge.Properties,
+		}
+
+		if err := u.addEdge(src, tgt, edge); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (u *undirected[K, T]) Vertex(hash K) (T, error) {
 	vertex, _, err := u.store.Vertex(hash)
 	return vertex, err

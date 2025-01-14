@@ -252,6 +252,144 @@ func TestUndirected_Vertex(t *testing.T) {
 	}
 }
 
+func TestUndirected_UpdateVertex(t *testing.T) {
+	tests := map[string]struct {
+		vertices     []int
+		properties   *VertexProperties
+		edges        []Edge[int]
+		updateVertex struct {
+			existingHash int
+			vertex       int
+			properties   *VertexProperties
+		}
+		expectedVertices   []int
+		expectedProperties *VertexProperties
+		expectedEdges      []Edge[int]
+		expectedErr        error
+	}{
+		"update a vertex": {
+			vertices: []int{1, 2},
+			edges: []Edge[int]{
+				{
+					Source: 1,
+					Target: 2,
+					Properties: EdgeProperties{
+						Weight: 10,
+						Attributes: map[string]string{
+							"color": "red",
+						},
+						Data: "my-edge",
+					},
+				},
+			},
+			updateVertex: struct {
+				existingHash int
+				vertex       int
+				properties   *VertexProperties
+			}{
+				existingHash: 1,
+				vertex:       100,
+				properties: &VertexProperties{
+					Weight: 20,
+					Attributes: map[string]string{
+						"color": "blue",
+						"label": "a blue edge",
+					},
+				},
+			},
+			expectedVertices: []int{100, 2},
+			expectedEdges: []Edge[int]{
+				{
+					Source: 100,
+					Target: 2,
+					Properties: EdgeProperties{
+						Weight: 10,
+						Attributes: map[string]string{
+							"color": "red",
+						},
+						Data: "my-edge",
+					},
+				},
+			},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			graph := newUndirected(IntHash, &Traits{}, newMemoryStore[int, int]())
+
+			var err error
+
+			for _, vertex := range test.vertices {
+				if test.properties == nil {
+					err = graph.AddVertex(vertex)
+					continue
+				}
+				// If there are vertex attributes, iterate over them and call the
+				// VertexAttribute functional option for each entry. A vertex should
+				// only have one attribute so that AddVertex is invoked once.
+				for key, value := range test.properties.Attributes {
+					err = graph.AddVertex(vertex, VertexWeight(test.properties.Weight), VertexAttribute(key, value))
+				}
+			}
+
+			for _, edge := range test.edges {
+				_ = graph.AddEdge(copyEdge(edge))
+			}
+
+			if test.updateVertex.properties == nil {
+				err = graph.UpdateVertex(test.updateVertex.existingHash, test.updateVertex.vertex)
+			} else {
+				options := []func(*VertexProperties){VertexWeight(test.updateVertex.properties.Weight)}
+				for key, value := range test.updateVertex.properties.Attributes {
+					options = append(options, VertexAttribute(key, value))
+				}
+				err = graph.UpdateVertex(test.updateVertex.existingHash, test.updateVertex.vertex, options...)
+			}
+			if !errors.Is(err, test.expectedErr) {
+				t.Fatalf("expected error %v, got %v", test.expectedErr, err)
+			}
+
+			graphStore := graph.store.(*memoryStore[int, int])
+
+			for _, expectedVertex := range test.expectedVertices {
+				if len(graphStore.vertices) != len(test.expectedVertices) {
+					t.Errorf("%s: vertex count doesn't match: expected %v, got %v", name, len(test.expectedVertices), len(graphStore.vertices))
+				}
+
+				hash := graph.hash(expectedVertex)
+				vertices := graph.store.(*memoryStore[int, int]).vertices
+				if _, ok := vertices[hash]; !ok {
+					t.Errorf("%s: vertex %v not found in graph: %v", name, expectedVertex, vertices)
+				}
+
+				if test.properties == nil {
+					continue
+				}
+
+				if graphStore.vertexProperties[hash].Weight != test.expectedProperties.Weight {
+					t.Errorf("%s: edge weights don't match: expected weight %v, got %v", name, test.expectedProperties.Weight, graphStore.vertexProperties[hash].Weight)
+				}
+
+				if len(graphStore.vertexProperties[hash].Attributes) != len(test.expectedProperties.Attributes) {
+					t.Fatalf("%s: attributes lengths don't match: expcted %v, got %v", name, len(test.expectedProperties.Attributes), len(graphStore.vertexProperties[hash].Attributes))
+				}
+			}
+
+			for _, expectedEdge := range test.expectedEdges {
+				actualEdge, err := graph.Edge(expectedEdge.Source, expectedEdge.Target)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err.Error())
+				}
+
+				if !edgesAreEqual(expectedEdge, actualEdge, false) {
+					t.Errorf("expected edge %v, got %v", expectedEdge, actualEdge)
+				}
+			}
+		})
+	}
+}
+
 func TestUndirected_AddEdge(t *testing.T) {
 	tests := map[string]struct {
 		vertices      []int
